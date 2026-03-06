@@ -47,16 +47,14 @@ data class PlayerSave(
     val gold: Int,
     val poisonTicksLeft: Int,
     val attackCooldownMsLeft: Long,
-    val attackSpeedBuffTicks: Int, // Новое поле для байта скорости
+    val attackSpeedBuffTicks: Int,
     val questState: String
 )
 
-//События игровые - Flow будет рассылать их всем системам
 sealed interface GameEvent{
     val playerId: String
 }
 
-// Новое событие: команда отклонена
 data class CommandRejected(
     override val playerId: String,
     val reason: String
@@ -90,7 +88,6 @@ data class PoisonApplied(
     val intervalMs: Long
 ): GameEvent
 
-// Новое событие: байт скорости атаки
 data class AttackSpeedBuffApplied(
     override val playerId: String,
     val ticks: Int
@@ -107,7 +104,6 @@ data class SaveRequested(
 
 class GameServer {
     private val _events = MutableSharedFlow<GameEvent>(extraBufferCapacity = 64)
-    // Дополнительный небольшой буфер, что Emit при рассылке событий чаще проходил не упираясь в ограничение буфера
 
     val events: SharedFlow<GameEvent> = _events.asSharedFlow()
 
@@ -129,7 +125,6 @@ class GameServer {
     }
 
     fun updatePlayer(playerId: String, change: (PlayerSave) -> PlayerSave) {
-        //change - функция, которая берёт старый PlayerSave и возращает новый
 
         val oldMap = _players.value
         val oldPlayer = oldMap[playerId] ?: return
@@ -152,7 +147,7 @@ class  DamageSystem(
 ){
     fun onEvent(e: GameEvent){
         if(e is DamageDealt){
-            server.updatePlayer(e.targetId){player -> // Урон получает targetId, а не playerId
+            server.updatePlayer(e.targetId){player ->
                 val newHp = (player.hp - e.amount).coerceAtLeast(0)
                 player.copy(hp = newHp)
             }
@@ -166,12 +161,10 @@ class  CooldownSystem(
 ){
     private val cooldownJobs = mutableMapOf<String, Job>()
 
-    // Функция для получения текущей длительности кулдауна с учетом баффа
     fun getCooldownDuration(playerId: String, baseCooldown: Long): Long {
         val player = server.getPlayer(playerId)
         return if (player.attackSpeedBuffTicks > 0) {
-            // Если есть бафф скорости, кулдаун меньше
-            (baseCooldown * 0.583).toLong() // 700ms вместо 1200ms (примерно 58.3%)
+            (baseCooldown * 0.583).toLong()
         } else {
             baseCooldown
         }
@@ -203,8 +196,6 @@ class  CooldownSystem(
         return server.getPlayer(playerId).attackCooldownMsLeft <= 0L
     }
 }
-
-// Новая система для баффа скорости атаки
 class AttackSpeedBuffSystem(
     private val server: GameServer,
     private val scope: kotlinx.coroutines.CoroutineScope
@@ -213,17 +204,14 @@ class AttackSpeedBuffSystem(
 
     fun onEvent(e: GameEvent) {
         if (e is AttackSpeedBuffApplied) {
-            // Отменяем предыдущий бафф, если был
             buffJobs[e.playerId]?.cancel()
-
-            // Добавляем тики баффа к существующим
             server.updatePlayer(e.playerId) { player ->
                 player.copy(attackSpeedBuffTicks = player.attackSpeedBuffTicks + e.ticks)
             }
 
             val job = scope.launch {
                 while (isActive && server.getPlayer(e.playerId).attackSpeedBuffTicks > 0) {
-                    delay(1000L) // Каждую секунду уменьшаем счетчик тиков
+                    delay(1000L)
                     server.updatePlayer(e.playerId) { player ->
                         val newTicks = (player.attackSpeedBuffTicks - 1).coerceAtLeast(0)
                         player.copy(attackSpeedBuffTicks = newTicks)
@@ -284,7 +272,6 @@ class QuestSystem(
             is ChoiceSelected -> {
                 if (e.npcId != npcId) return
 
-                // Задание 1: Отказ, если игрок не в состоянии OFFERED
                 if (player.questState != "OFFERED") {
                     publish(CommandRejected(e.playerId, "Нельзя выбрать помощь, пока квест не предложен!"))
                     return
@@ -342,7 +329,7 @@ class  HudState {
     val poisonTicksLeft = mutableStateOf(0)
     val questState = mutableStateOf("START")
     val attackCooldownMsLeft = mutableStateOf(0L)
-    val attackSpeedBuffTicks = mutableStateOf(0) // Для отображения баффа
+    val attackSpeedBuffTicks = mutableStateOf(0)
 
     val log = mutableStateOf<List<String>>(emptyList())
 }
@@ -358,7 +345,7 @@ object  Shared{
     var quests: QuestSystem? = null
     var poison: PoisonSystem? = null
     var damage: DamageSystem? = null
-    var attackSpeedBuff: AttackSpeedBuffSystem? = null // Добавили новую систему
+    var attackSpeedBuff: AttackSpeedBuffSystem? = null
 }
 
 fun main() = KoolApplication {
@@ -402,14 +389,12 @@ fun main() = KoolApplication {
         Shared.quests = quests
         Shared.attackSpeedBuff = attackSpeedBuff
 
-        // Обработчик для DamageSystem
         coroutineScope.launch {
             server.events.collect { event ->
                 damage.onEvent(event)
             }
         }
 
-        // Обработчик для PoisonSystem
         coroutineScope.launch {
             server.events.collect { event ->
                 poison.onEvent(event) { dmg ->
@@ -420,7 +405,6 @@ fun main() = KoolApplication {
             }
         }
 
-        // Обработчик для QuestSystem (теперь может публиковать CommandRejected)
         coroutineScope.launch {
             server.events.collect { event ->
                 quests.onEvent(event) { newEvent ->
@@ -431,14 +415,11 @@ fun main() = KoolApplication {
             }
         }
 
-        // Обработчик для AttackSpeedBuffSystem
         coroutineScope.launch {
             server.events.collect { event ->
                 attackSpeedBuff.onEvent(event)
             }
         }
-
-        // Обработчик для SaveSystem
         coroutineScope.launch {
             server.events.collect { event ->
                 if (event is SaveRequested) {
@@ -455,7 +436,6 @@ fun main() = KoolApplication {
         val server = Shared.server
 
         if (server != null) {
-            // Логирование событий в HUD
             coroutineScope.launch {
                 server.events.collect { event ->
                     val line = when (event) {
@@ -467,7 +447,7 @@ fun main() = KoolApplication {
                         is SaveRequested -> "Запрос на сохранение"
                         is QuestStateChanged -> "${event.playerId} перешёл на новый этап квеста ${event.newState}"
                         is AttackSpeedBuffApplied -> "${event.playerId} получил бафф скорости на ${event.ticks} сек"
-                        is CommandRejected -> "❌ Отказ: ${event.reason}" // Отображаем отказ
+                        is CommandRejected -> " Отказ: ${event.reason}" // Отображаем отказ
                         else -> "Неизвестное событие"
                     }
                     hudLog(hud, "$line")
@@ -492,11 +472,6 @@ fun main() = KoolApplication {
 
         addPanelSurface {
             modifier
-                .align(AlignmentX.Start, AlignmentY.Top)
-                .margin(16.dp)
-                .background(RoundRectBackground(Color(0f, 0f, 0f, 0.6f), 14.dp))
-                .padding(12.dp)
-                .width(300.dp) // Сделаем панель пошире
 
             Text("Player: ${hud.activePlayerId.use()}") {}
             Text("HP: ${hud.hp.use()} | Gold: ${hud.gold.use()}") {
@@ -513,8 +488,7 @@ fun main() = KoolApplication {
             }
 
             Column {
-                // Кнопка переключения игрока
-                Button("Switch Player (Oleg/Stas)") {
+                Button("Поменять игрока (Oleg/Stas)") {
                     modifier.margin(bottom = 8.dp)
                         .onClick {
                         hud.activePlayerId.value =
@@ -522,18 +496,15 @@ fun main() = KoolApplication {
                     }
                 }
 
-                // Задание 2: Кнопка атаки
-                Button("⚔️ Attack Goblin") {
+                Button("Атаковать попе шнеле") {
                     modifier.margin(bottom = 8.dp)
                         .onClick {
                         val server = Shared.server ?: return@onClick
                         val playerId = hud.activePlayerId.value
-                        val targetId = "Goblin" // Тестовая цель
+                        val targetId = "Goblin"
 
-                        // Проверяем, может ли игрок атаковать (кулдаун)
                         val cooldowns = Shared.cooldowns
                         if (cooldowns != null && !cooldowns.canAttack(playerId)) {
-                            // Публикуем отказ, если кулдаун еще не прошел
                             val rejectEvent = CommandRejected(playerId, "Атака еще на перезарядке! Осталось ${hud.attackCooldownMsLeft.use()} мс")
                             if (!server.tryPublish(rejectEvent)) {
                                 coroutineScope.launch { server.publish(rejectEvent) }
@@ -541,7 +512,6 @@ fun main() = KoolApplication {
                             return@onClick
                         }
 
-                        // 1. Публикуем событие AttackPressed
                         val attackEvent = AttackPressed(playerId, targetId)
                         val published = if (!server.tryPublish(attackEvent)) {
                             coroutineScope.launch { server.publish(attackEvent) }
@@ -551,20 +521,16 @@ fun main() = KoolApplication {
                         }
 
                         if (published) {
-                            // 2. Если атака разрешена, наносим урон
-                            val damageEvent = DamageDealt(playerId, targetId, 15) // 15 урона
+                            val damageEvent = DamageDealt(playerId, targetId, 15)
                             if (!server.tryPublish(damageEvent)) {
                                 coroutineScope.launch { server.publish(damageEvent) }
                             }
-
-                            // 3. Запускаем кулдаун (базовый 1200 мс, но система сама учтет бафф)
                             cooldowns?.startCooldown(playerId, 1200)
                         }
                     }
                 }
 
-                // Кнопка для тестирования баффа скорости атаки (Задание 3)
-                Button("⚡ Speed Buff (5 sec)") {
+                Button("Бафф скорости атаки на 5 сек") {
                     modifier.margin(bottom = 8.dp)
                         .onClick {
                         val server = Shared.server ?: return@onClick
@@ -574,14 +540,13 @@ fun main() = KoolApplication {
                         if (!server.tryPublish(buffEvent)) {
                             coroutineScope.launch { server.publish(buffEvent) }
                         }
-                        hudLog(hud, "👟 Бафф скорости активирован для $playerId")
+                        hudLog(hud, "Ты выпил энергетик и у тебя остановилось сердце $playerId")
                     }
                 }
 
-                // Кнопки для тестирования квеста и отказа (Задание 1)
                 Row {
                     modifier.margin(bottom = 8.dp)
-                    Button("Talk to Alchemist") {
+                    Button("Поговорить с алхимиком") {
                         modifier.margin(end = 8.dp)
                             .onClick {
                             val server = Shared.server ?: return@onClick
@@ -592,7 +557,7 @@ fun main() = KoolApplication {
                             }
                         }
                     }
-                    Button("Choose Help") {
+                    Button("Выбрать помочь") {
                         modifier.margin(end = 8.dp)
                             .onClick {
                             val server = Shared.server ?: return@onClick
@@ -605,8 +570,7 @@ fun main() = KoolApplication {
                     }
                 }
 
-                // Кнопка для тестирования яда
-                Button("💀 Poison Self (3 ticks)") {
+                Button("Отравить себя (колой не черной)") {
                     modifier.margin(bottom = 8.dp)
                         .onClick {
                         val server = Shared.server ?: return@onClick
@@ -618,7 +582,6 @@ fun main() = KoolApplication {
                     }
                 }
 
-                // Кнопка сохранения
                 Button("Save JSON") {
                     modifier.margin(bottom = 8.dp)
                         .onClick {
@@ -633,7 +596,7 @@ fun main() = KoolApplication {
                     }
                 }
 
-                Text("Log:") {
+                Text("Логи:") {
                     modifier.margin(top = 8.dp, bottom = 4.dp)
                 }
                 Column {
