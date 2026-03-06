@@ -454,7 +454,6 @@ fun main() = KoolApplication {
                 }
             }
 
-            // Обновление HUD при изменении данных игрока
             coroutineScope.launch {
                 server.players.collect { playerMap ->
                     val pid = hud.activePlayerId.value
@@ -496,12 +495,12 @@ fun main() = KoolApplication {
                     }
                 }
 
-                Button("Атаковать попе шнеле") {
+                Button("Атаковать Артемия (даму полусвета)") {
                     modifier.margin(bottom = 8.dp)
                         .onClick {
                         val server = Shared.server ?: return@onClick
                         val playerId = hud.activePlayerId.value
-                        val targetId = "Goblin"
+                        val targetId = "Artemi"
 
                         val cooldowns = Shared.cooldowns
                         if (cooldowns != null && !cooldowns.canAttack(playerId)) {
