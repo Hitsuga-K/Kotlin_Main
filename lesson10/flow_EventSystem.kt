@@ -1,41 +1,41 @@
 package lesson10
 
-import de.fabmax.kool.KoolApplication           // KoolApplication - запускает Kool-приложение (окно + цикл рендера)
-import de.fabmax.kool.addScene                  // addScene - функция "добавь сцену" в приложение (у тебя она просила отдельный импорт)
+import de.fabmax.kool.KoolApplication
+import de.fabmax.kool.addScene
 import de.fabmax.kool.math.FLT_EPSILON
-import de.fabmax.kool.math.Vec3f                // Vec3f - 3D-вектор (x, y, z), как координаты / направление
-import de.fabmax.kool.math.deg                  // deg - превращает число в "градусы" (угол)
-import de.fabmax.kool.scene.*                   // scene.* - Scene, defaultOrbitCamera, addColorMesh, lighting и т.д.
-import de.fabmax.kool.modules.ksl.KslPbrShader  // KslPbrShader - готовый PBR-шейдер (материал)
-import de.fabmax.kool.util.Color                // Color - цвет (RGBA)
-import de.fabmax.kool.util.Time                 // Time.deltaT - сколько секунд прошло между кадрами
-import de.fabmax.kool.pipeline.ClearColorLoad   // ClearColorLoad - режим: "не очищай экран, оставь то что уже нарисовано"
-import de.fabmax.kool.modules.ui2.*             // UI2: addPanelSurface, Column, Row, Button, Text, dp, remember, mutableStateOf
+import de.fabmax.kool.math.Vec3f
+import de.fabmax.kool.math.deg
+import de.fabmax.kool.scene.*
+import de.fabmax.kool.modules.ksl.KslPbrShader
+import de.fabmax.kool.util.Color
+import de.fabmax.kool.util.Time
+import de.fabmax.kool.pipeline.ClearColorLoad
+import de.fabmax.kool.modules.ui2.*
 import de.fabmax.kool.util.DynamicStruct
 import de.fabmax.kool.modules.ui2.UiModifier.*
 import de.fabmax.kool.physics.geometry.PlaneGeometry
 import de.fabmax.kool.physics.vehicle.Vehicle
 import de.fabmax.kool.util.checkIsReleased
 
-import kotlinx.coroutines.launch  // запускает корутину
-import kotlinx.coroutines.Job     // контроллер запущенной корутины
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.isActive // проверка жива ли ещё корутина - полезно для циклов
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.delay
 
 // Flow корутины
-import kotlinx.coroutines.launch // запуск корутины
-import kotlinx.coroutines.flow.MutableSharedFlow // табло состояний
-import kotlinx.coroutines.flow.SharedFlow // Только чтение для подписчиков
-import kotlinx.coroutines.flow.MutableStateFlow // Радиостанция событий
-import kotlinx.coroutines.flow.StateFlow // Только для чтения стостояний
-import kotlinx.coroutines.flow.asSharedFlow // Отдать наружу только SharedFlow
-import kotlinx.coroutines.flow.asStateFlow // Отдать только StateFlow
-import kotlinx.coroutines.flow.collect // слушать поток
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 
 // импорты Serialization
-import kotlinx.serialization.Serializable // Анотация, что можно сохранять
-import kotlinx.serialization.json.Json // Формат файла Json
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 
 import java.io.File
 
@@ -47,14 +47,21 @@ data class PlayerSave(
     val gold: Int,
     val poisonTicksLeft: Int,
     val attackCooldownMsLeft: Long,
+    val attackSpeedBuffTicks: Int, // Новое поле для байта скорости
     val questState: String
 )
 
 //События игровые - Flow будет рассылать их всем системам
-
 sealed interface GameEvent{
     val playerId: String
 }
+
+// Новое событие: команда отклонена
+data class CommandRejected(
+    override val playerId: String,
+    val reason: String
+): GameEvent
+
 data class AttackPressed(
     override val playerId: String,
     val targetId: String
@@ -83,6 +90,12 @@ data class PoisonApplied(
     val intervalMs: Long
 ): GameEvent
 
+// Новое событие: байт скорости атаки
+data class AttackSpeedBuffApplied(
+    override val playerId: String,
+    val ticks: Int
+): GameEvent
+
 data class  TalkedToNpc(
     override val playerId: String,
     val npcId: String,
@@ -100,8 +113,8 @@ class GameServer {
 
     private val _players = MutableStateFlow(
         mapOf(
-            "Oleg" to PlayerSave("Oleg", 100, 0, 0, 0L, "START"),
-            "Stas" to PlayerSave("Oleg", 100, 0, 0, 0, "START")
+            "Oleg" to PlayerSave("Oleg", 100, 0, 0, 0L, 0, "START"),
+            "Stas" to PlayerSave("Stas", 100, 0, 0, 0L, 0, "START") // Исправил опечатку "Oleg" на "Stas"
         )
     )
 
@@ -126,35 +139,51 @@ class GameServer {
         val newMap = oldMap.toMutableMap()
         newMap[playerId] = newPlayer
 
-        _players.value = newMap.toMutableMap()
+        _players.value = newMap
     }
 
     fun getPlayer(playerId: String): PlayerSave {
-        return _players.value[playerId] ?: PlayerSave(playerId, 100, 0, 0, 0L, "START")
+        return _players.value[playerId] ?: PlayerSave(playerId, 100, 0, 0, 0L, 0, "START")
     }
-
 }
+
 class  DamageSystem(
     private val server: GameServer
 ){
     fun onEvent(e: GameEvent){
         if(e is DamageDealt){
-            server.updatePlayer(e.playerId){player -> val newHp = (player.hp - e.amount).coerceAtLeast(0)
+            server.updatePlayer(e.targetId){player -> // Урон получает targetId, а не playerId
+                val newHp = (player.hp - e.amount).coerceAtLeast(0)
                 player.copy(hp = newHp)
             }
         }
     }
 }
+
 class  CooldownSystem(
     private val server: GameServer,
     private val scope: kotlinx.coroutines.CoroutineScope
 ){
     private val cooldownJobs = mutableMapOf<String, Job>()
 
-    fun startCooldown(playerId: String, totalMs: Long){
+    // Функция для получения текущей длительности кулдауна с учетом баффа
+    fun getCooldownDuration(playerId: String, baseCooldown: Long): Long {
+        val player = server.getPlayer(playerId)
+        return if (player.attackSpeedBuffTicks > 0) {
+            // Если есть бафф скорости, кулдаун меньше
+            (baseCooldown * 0.583).toLong() // 700ms вместо 1200ms (примерно 58.3%)
+        } else {
+            baseCooldown
+        }
+    }
+
+    fun startCooldown(playerId: String, baseTotalMs: Long){
         cooldownJobs[playerId]?.cancel()
 
-        server.updatePlayer(playerId) {player -> player.copy(attackCooldownMsLeft = totalMs)}
+        val actualCooldown = getCooldownDuration(playerId, baseTotalMs)
+        println("Игрок $playerId: кулдаун $actualCooldown мс (базовый: $baseTotalMs, бафф: ${server.getPlayer(playerId).attackSpeedBuffTicks})")
+
+        server.updatePlayer(playerId) {player -> player.copy(attackCooldownMsLeft = actualCooldown)}
 
         val job = scope.launch {
             val step = 100L
@@ -174,6 +203,38 @@ class  CooldownSystem(
         return server.getPlayer(playerId).attackCooldownMsLeft <= 0L
     }
 }
+
+// Новая система для баффа скорости атаки
+class AttackSpeedBuffSystem(
+    private val server: GameServer,
+    private val scope: kotlinx.coroutines.CoroutineScope
+){
+    private val buffJobs = mutableMapOf<String, Job>()
+
+    fun onEvent(e: GameEvent) {
+        if (e is AttackSpeedBuffApplied) {
+            // Отменяем предыдущий бафф, если был
+            buffJobs[e.playerId]?.cancel()
+
+            // Добавляем тики баффа к существующим
+            server.updatePlayer(e.playerId) { player ->
+                player.copy(attackSpeedBuffTicks = player.attackSpeedBuffTicks + e.ticks)
+            }
+
+            val job = scope.launch {
+                while (isActive && server.getPlayer(e.playerId).attackSpeedBuffTicks > 0) {
+                    delay(1000L) // Каждую секунду уменьшаем счетчик тиков
+                    server.updatePlayer(e.playerId) { player ->
+                        val newTicks = (player.attackSpeedBuffTicks - 1).coerceAtLeast(0)
+                        player.copy(attackSpeedBuffTicks = newTicks)
+                    }
+                }
+            }
+            buffJobs[e.playerId] = job
+        }
+    }
+}
+
 class PoisonSystem(
     private val server: GameServer,
     private val scope: kotlinx.coroutines.CoroutineScope
@@ -194,13 +255,14 @@ class PoisonSystem(
                     server.updatePlayer(e.playerId){ player ->
                         player.copy(poisonTicksLeft = (player.poisonTicksLeft - 1).coerceAtLeast(0))
                     }
-                    publishDamage(DamageDealt(e.playerId, "self", e.damagePerTick))
+                    publishDamage(DamageDealt(e.playerId, e.playerId, e.damagePerTick)) // Цель - сам игрок
                 }
             }
             poisonJobs[e.playerId] = job
         }
     }
 }
+
 class QuestSystem(
     private val server: GameServer,
     private val scope: kotlinx.coroutines.CoroutineScope
@@ -222,6 +284,12 @@ class QuestSystem(
             is ChoiceSelected -> {
                 if (e.npcId != npcId) return
 
+                // Задание 1: Отказ, если игрок не в состоянии OFFERED
+                if (player.questState != "OFFERED") {
+                    publish(CommandRejected(e.playerId, "Нельзя выбрать помощь, пока квест не предложен!"))
+                    return
+                }
+
                 if (player.questState == "OFFERED"){
                     val newState = if(e.choiceId == "help") "GOOD_END"
                     else "EVIL_END"
@@ -234,6 +302,7 @@ class QuestSystem(
         }
     }
 }
+
 class SaveSystem{
     private val json = Json {
         prettyPrint = true
@@ -265,6 +334,7 @@ class SaveSystem{
         }
     }
 }
+
 class  HudState {
     val activePlayerId = mutableStateOf("Oleg")
     val hp = mutableStateOf(100)
@@ -272,6 +342,7 @@ class  HudState {
     val poisonTicksLeft = mutableStateOf(0)
     val questState = mutableStateOf("START")
     val attackCooldownMsLeft = mutableStateOf(0L)
+    val attackSpeedBuffTicks = mutableStateOf(0) // Для отображения баффа
 
     val log = mutableStateOf<List<String>>(emptyList())
 }
@@ -287,6 +358,7 @@ object  Shared{
     var quests: QuestSystem? = null
     var poison: PoisonSystem? = null
     var damage: DamageSystem? = null
+    var attackSpeedBuff: AttackSpeedBuffSystem? = null // Добавили новую систему
 }
 
 fun main() = KoolApplication {
@@ -320,6 +392,7 @@ fun main() = KoolApplication {
         val cooldowns = CooldownSystem(server, coroutineScope)
         val poison = PoisonSystem(server, coroutineScope)
         val quests = QuestSystem(server, coroutineScope)
+        val attackSpeedBuff = AttackSpeedBuffSystem(server, coroutineScope) // Создали новую систему
 
         Shared.server = server
         Shared.saver = saver
@@ -327,12 +400,16 @@ fun main() = KoolApplication {
         Shared.cooldowns = cooldowns
         Shared.poison = poison
         Shared.quests = quests
+        Shared.attackSpeedBuff = attackSpeedBuff
 
+        // Обработчик для DamageSystem
         coroutineScope.launch {
             server.events.collect { event ->
                 damage.onEvent(event)
             }
         }
+
+        // Обработчик для PoisonSystem
         coroutineScope.launch {
             server.events.collect { event ->
                 poison.onEvent(event) { dmg ->
@@ -342,6 +419,8 @@ fun main() = KoolApplication {
                 }
             }
         }
+
+        // Обработчик для QuestSystem (теперь может публиковать CommandRejected)
         coroutineScope.launch {
             server.events.collect { event ->
                 quests.onEvent(event) { newEvent ->
@@ -351,6 +430,15 @@ fun main() = KoolApplication {
                 }
             }
         }
+
+        // Обработчик для AttackSpeedBuffSystem
+        coroutineScope.launch {
+            server.events.collect { event ->
+                attackSpeedBuff.onEvent(event)
+            }
+        }
+
+        // Обработчик для SaveSystem
         coroutineScope.launch {
             server.events.collect { event ->
                 if (event is SaveRequested) {
@@ -360,12 +448,14 @@ fun main() = KoolApplication {
             }
         }
     }
+
     addScene {
         setupUiScene(ClearColorLoad)
 
         val server = Shared.server
 
         if (server != null) {
+            // Логирование событий в HUD
             coroutineScope.launch {
                 server.events.collect { event ->
                     val line = when (event) {
@@ -376,11 +466,15 @@ fun main() = KoolApplication {
                         is ChoiceSelected -> "${event.playerId} выбрал ${event.choiceId}"
                         is SaveRequested -> "Запрос на сохранение"
                         is QuestStateChanged -> "${event.playerId} перешёл на новый этап квеста ${event.newState}"
+                        is AttackSpeedBuffApplied -> "${event.playerId} получил бафф скорости на ${event.ticks} сек"
+                        is CommandRejected -> "❌ Отказ: ${event.reason}" // Отображаем отказ
                         else -> "Неизвестное событие"
                     }
                     hudLog(hud, "$line")
                 }
             }
+
+            // Обновление HUD при изменении данных игрока
             coroutineScope.launch {
                 server.players.collect { playerMap ->
                     val pid = hud.activePlayerId.value
@@ -391,43 +485,146 @@ fun main() = KoolApplication {
                     hud.poisonTicksLeft.value = player.poisonTicksLeft
                     hud.questState.value = player.questState
                     hud.attackCooldownMsLeft.value = player.attackCooldownMsLeft
+                    hud.attackSpeedBuffTicks.value = player.attackSpeedBuffTicks // Обновляем отображение баффа
                 }
             }
         }
+
         addPanelSurface {
             modifier
                 .align(AlignmentX.Start, AlignmentY.Top)
                 .margin(16.dp)
                 .background(RoundRectBackground(Color(0f, 0f, 0f, 0.6f), 14.dp))
                 .padding(12.dp)
+                .width(300.dp) // Сделаем панель пошире
 
             Text("Player: ${hud.activePlayerId.use()}") {}
-            Text("HP: ${hud.hp.use()} Gold: ${hud.gold.use()}") {
+            Text("HP: ${hud.hp.use()} | Gold: ${hud.gold.use()}") {
                 modifier.margin(bottom = sizes.gap)
             }
 
-            Text("QuestState: ${hud.questState.use()}") {}
-            Text("Poison ticks left: ${hud.poisonTicksLeft.use()}") {}
-            Text("Attack cooldown: ${hud.attackCooldownMsLeft.use()}") {
+            Text("Quest: ${hud.questState.use()}") {}
+            Text("Poison ticks: ${hud.poisonTicksLeft.use()}") {}
+            Text("Attack speed buff: ${hud.attackSpeedBuffTicks.use()}") { // Отображаем бафф
+                modifier.margin(bottom = sizes.gap)
+            }
+            Text("Cooldown left: ${hud.attackCooldownMsLeft.use()} ms") {
                 modifier.margin(bottom = sizes.gap)
             }
 
-            Row {
-                Button("Switch Player") {
-                    hud.activePlayerId.value =
-                        if (hud.activePlayerId.value == "Oleg") "Stas" else "Oleg"
+            Column {
+                // Кнопка переключения игрока
+                Button("Switch Player (Oleg/Stas)") {
+                    modifier.margin(bottom = 8.dp)
+                        .onClick {
+                        hud.activePlayerId.value =
+                            if (hud.activePlayerId.value == "Oleg") "Stas" else "Oleg"
+                    }
                 }
-                Button("Save JSON") {
-                    modifier.onClick {
-                        // получить server из Shared и если null - вернуть onClick
-                        // получить playerId
-                        // 1) пробовать отправить событие сохранения по playerId без корутины
-                        // 2) если не удалось - отправить "нормально" через корутину this@addScene.coroutineScope.launch
+
+                // Задание 2: Кнопка атаки
+                Button("⚔️ Attack Goblin") {
+                    modifier.margin(bottom = 8.dp)
+                        .onClick {
+                        val server = Shared.server ?: return@onClick
+                        val playerId = hud.activePlayerId.value
+                        val targetId = "Goblin" // Тестовая цель
+
+                        // Проверяем, может ли игрок атаковать (кулдаун)
+                        val cooldowns = Shared.cooldowns
+                        if (cooldowns != null && !cooldowns.canAttack(playerId)) {
+                            // Публикуем отказ, если кулдаун еще не прошел
+                            val rejectEvent = CommandRejected(playerId, "Атака еще на перезарядке! Осталось ${hud.attackCooldownMsLeft.use()} мс")
+                            if (!server.tryPublish(rejectEvent)) {
+                                coroutineScope.launch { server.publish(rejectEvent) }
+                            }
+                            return@onClick
+                        }
+
+                        // 1. Публикуем событие AttackPressed
+                        val attackEvent = AttackPressed(playerId, targetId)
+                        val published = if (!server.tryPublish(attackEvent)) {
+                            coroutineScope.launch { server.publish(attackEvent) }
+                            true
+                        } else {
+                            true
+                        }
+
+                        if (published) {
+                            // 2. Если атака разрешена, наносим урон
+                            val damageEvent = DamageDealt(playerId, targetId, 15) // 15 урона
+                            if (!server.tryPublish(damageEvent)) {
+                                coroutineScope.launch { server.publish(damageEvent) }
+                            }
+
+                            // 3. Запускаем кулдаун (базовый 1200 мс, но система сама учтет бафф)
+                            cooldowns?.startCooldown(playerId, 1200)
+                        }
+                    }
+                }
+
+                // Кнопка для тестирования баффа скорости атаки (Задание 3)
+                Button("⚡ Speed Buff (5 sec)") {
+                    modifier.margin(bottom = 8.dp)
+                        .onClick {
                         val server = Shared.server ?: return@onClick
                         val playerId = hud.activePlayerId.value
 
+                        val buffEvent = AttackSpeedBuffApplied(playerId, 5) // 5 тиков баффа
+                        if (!server.tryPublish(buffEvent)) {
+                            coroutineScope.launch { server.publish(buffEvent) }
+                        }
+                        hudLog(hud, "👟 Бафф скорости активирован для $playerId")
+                    }
+                }
+
+                // Кнопки для тестирования квеста и отказа (Задание 1)
+                Row {
+                    modifier.margin(bottom = 8.dp)
+                    Button("Talk to Alchemist") {
+                        modifier.margin(end = 8.dp)
+                            .onClick {
+                            val server = Shared.server ?: return@onClick
+                            val playerId = hud.activePlayerId.value
+                            val talkEvent = TalkedToNpc(playerId, "alchemist")
+                            if (!server.tryPublish(talkEvent)) {
+                                coroutineScope.launch { server.publish(talkEvent) }
+                            }
+                        }
+                    }
+                    Button("Choose Help") {
+                        modifier.margin(end = 8.dp)
+                            .onClick {
+                            val server = Shared.server ?: return@onClick
+                            val playerId = hud.activePlayerId.value
+                            val choiceEvent = ChoiceSelected(playerId, "alchemist", "help")
+                            if (!server.tryPublish(choiceEvent)) {
+                                coroutineScope.launch { server.publish(choiceEvent) }
+                            }
+                        }
+                    }
+                }
+
+                // Кнопка для тестирования яда
+                Button("💀 Poison Self (3 ticks)") {
+                    modifier.margin(bottom = 8.dp)
+                        .onClick {
+                        val server = Shared.server ?: return@onClick
+                        val playerId = hud.activePlayerId.value
+                        val poisonEvent = PoisonApplied(playerId, 3, 5, 2000)
+                        if (!server.tryPublish(poisonEvent)) {
+                            coroutineScope.launch { server.publish(poisonEvent) }
+                        }
+                    }
+                }
+
+                // Кнопка сохранения
+                Button("Save JSON") {
+                    modifier.margin(bottom = 8.dp)
+                        .onClick {
+                        val server = Shared.server ?: return@onClick
+                        val playerId = hud.activePlayerId.value
                         val event = SaveRequested(playerId)
-                        
                         if (!server.tryPublish(event)) {
                             this@addScene.coroutineScope.launch {
                                 server.publish(event)
@@ -435,7 +632,17 @@ fun main() = KoolApplication {
                         }
                     }
                 }
+
+                Text("Log:") {
+                    modifier.margin(top = 8.dp, bottom = 4.dp)
+                }
+                Column {
+                    hud.log.use().forEach { logLine ->
+                        Text("• $logLine") {
+                        }
+                    }
+                }
             }
         }
     }
-}    
+}
