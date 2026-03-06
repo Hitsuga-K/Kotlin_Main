@@ -140,7 +140,7 @@ class  DamageSystem(
     fun onEvent(e: GameEvent){
         if(e is DamageDealt){
             server.updatePlayer(e.playerId){player -> val newHp = (player.hp - e.amount).coerceAtLeast(0)
-            player.copy(hp = newHp)
+                player.copy(hp = newHp)
             }
         }
     }
@@ -329,7 +329,7 @@ fun main() = KoolApplication {
         Shared.quests = quests
 
         coroutineScope.launch {
-            server.events.collect{ event ->
+            server.events.collect { event ->
                 damage.onEvent(event)
             }
         }
@@ -342,18 +342,18 @@ fun main() = KoolApplication {
                 }
             }
         }
-            coroutineScope.launch {
-                server.events.collect { event ->
-                    quests.onEvent(event){newEvent ->
-                        if (!server.tryPublish(newEvent)){
-                            coroutineScope.launch { server.publish(newEvent) }
+        coroutineScope.launch {
+            server.events.collect { event ->
+                quests.onEvent(event) { newEvent ->
+                    if (!server.tryPublish(newEvent)) {
+                        coroutineScope.launch { server.publish(newEvent) }
                     }
                 }
             }
         }
         coroutineScope.launch {
-            server.events.collect{ event ->
-                if (event is SaveRequested){
+            server.events.collect { event ->
+                if (event is SaveRequested) {
                     val snapShot = server.getPlayer(event.playerId)
                     saver.save(snapShot)
                 }
@@ -365,10 +365,10 @@ fun main() = KoolApplication {
 
         val server = Shared.server
 
-        if (server != null ){
+        if (server != null) {
             coroutineScope.launch {
-                server.events.collect{ event ->
-                    val line = when (event){
+                server.events.collect { event ->
+                    val line = when (event) {
                         is AttackPressed -> "${event.playerId} атаковал ${event.targetId}"
                         is DamageDealt -> "${event.targetId} получил ${event.amount} урона"
                         is PoisonApplied -> "на ${event.playerId} наложен яд на ${event.ticks} тиков"
@@ -382,7 +382,7 @@ fun main() = KoolApplication {
                 }
             }
             coroutineScope.launch {
-                server.players.collect{ playerMap ->
+                server.players.collect { playerMap ->
                     val pid = hud.activePlayerId.value
                     val player = playerMap[pid] ?: return@collect
 
@@ -401,14 +401,14 @@ fun main() = KoolApplication {
                 .background(RoundRectBackground(Color(0f, 0f, 0f, 0.6f), 14.dp))
                 .padding(12.dp)
 
-            Text("Player: ${hud.activePlayerId.use()}"){}
-            Text("HP: ${hud.hp.use()} Gold: ${hud.gold.use()}"){
+            Text("Player: ${hud.activePlayerId.use()}") {}
+            Text("HP: ${hud.hp.use()} Gold: ${hud.gold.use()}") {
                 modifier.margin(bottom = sizes.gap)
             }
 
-            Text("QuestState: ${hud.questState.use()}"){}
-            Text("Poison ticks left: ${hud.poisonTicksLeft.use()}"){}
-            Text("Attack cooldown: ${hud.attackCooldownMsLeft.use()}"){
+            Text("QuestState: ${hud.questState.use()}") {}
+            Text("Poison ticks left: ${hud.poisonTicksLeft.use()}") {}
+            Text("Attack cooldown: ${hud.attackCooldownMsLeft.use()}") {
                 modifier.margin(bottom = sizes.gap)
             }
 
@@ -417,8 +417,8 @@ fun main() = KoolApplication {
                     hud.activePlayerId.value =
                         if (hud.activePlayerId.value == "Oleg") "Stas" else "Oleg"
                 }
-                Button("Save JSON"){
-                    modifier.onClick{
+                Button("Save JSON") {
+                    modifier.onClick {
                         // получить server из Shared и если null - вернуть onClick
                         // получить playerId
                         // 1) пробовать отправить событие сохранения по playerId без корутины
@@ -427,15 +427,15 @@ fun main() = KoolApplication {
                         val playerId = hud.activePlayerId.value
 
                         val event = SaveRequested(playerId)
-
-            // Сначала пробуем отправить без корутины
+                        
                         if (!server.tryPublish(event)) {
-                // Если не получилось — отправляем нормально
-                        this@addScene.coroutineScope.launch {
-                        server.publish(event)
+                            this@addScene.coroutineScope.launch {
+                                server.publish(event)
+                            }
+                        }
                     }
                 }
             }
         }
     }
-}
+}    
