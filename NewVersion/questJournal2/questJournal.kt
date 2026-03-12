@@ -43,7 +43,7 @@ data class QuestJournalEntry(
     val questId: String,
     val title: String,
     val status: QuestStatus,
-    val objectiveText: String,  // Исправлено: было objectiveQuest
+    val objectiveText: String,
     val marker: QuestMarker,
     val markerHint: String
 )
@@ -68,7 +68,7 @@ data class QuestPinned(
     val questId: String
 ) : GameEvent
 
-data class QuestProgressed(  // Исправлено: было QuestProggressed
+data class QuestProgressed(
     override val playerId: String,
     val questId: String
 ) : GameEvent
@@ -89,17 +89,17 @@ data class CmdPinQuest(
     val questId: String
 ) : GameCommand
 
-data class CmdProgressQuest(  // Исправлено: было CmdProggressQuest
+data class CmdProgressQuest(
     override val playerId: String,
     val questId: String
 ) : GameCommand
 
 data class CmdSwitchPlayer(
     override val playerId: String,
-    val newPlayerId: String  // Исправлено: добавил правильное поле
+    val newPlayerId: String
 ) : GameCommand
 
-data class CmdAddQuest(  // Добавлен недостающий класс
+data class CmdAddQuest(
     override val playerId: String,
     val questId: String,
     val title: String
@@ -181,7 +181,7 @@ class QuestSystem {
 
         val marker = when {
             quest.status == QuestStatus.COMPLETED -> QuestMarker.COMPLETED
-            quest.isPinned -> QuestMarker.PINNED  
+            quest.isPinned -> QuestMarker.PINNED
             quest.isNew -> QuestMarker.NEW
             else -> QuestMarker.NONE
         }
