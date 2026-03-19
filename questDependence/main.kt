@@ -570,6 +570,23 @@ class GameServer{
             _events.emit(ServerMessage(playerId, "Квест $questId не найден"))
             return
         }
+        val q = list[index]
+
+        if (q.status != QuestStatus.ACTIVE){
+            _events.emit(ServerMessage(playerId, "Нельзя совершить $questId статус: ${q.status}"))
+            return
+        }
+        if (q.step != 2){
+            _events.emit(ServerMessage(playerId, "Нельзя совершить $questId начала дойди до этапа 2"))
+            return
+        }
+        list[index] =q.copy(
+            status = QuestStatus.COMPLETED,
+            step = 3,
+            isNew = false
+        )
+        setQuests(playerId, list)
+        _events.emit(QuestCompleted(playerId. questId))
     }
 }
 
