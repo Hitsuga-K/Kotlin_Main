@@ -35,6 +35,7 @@ import kotlinx.coroutines.flow.flatMapLatest // Нужно для переклю
 import kotlinx.serialization.Serializable // Анотация, что можно сохранять
 import kotlinx.serialization.json.Json // Формат файла Json
 
+
 import java.io.File
 
 enum class QuestStatus{
@@ -121,7 +122,6 @@ data class QuestJournalUpdated(
     override val playerId: String
 ): GameEvent
 
-// Игрок открыл квест - поменять маркер NEW
 data class QuestOpened(
     override val playerId: String,
     val questId: String
@@ -172,7 +172,6 @@ data class CmdQuestJournalUpdated(
     override val playerId: String
 ): GameCommand
 
-// Игрок открыл квест - поменять маркер NEW
 data class CmdQuestOpened(
     override val playerId: String,
     val questId: String
@@ -193,7 +192,6 @@ data class CmdQuestProggressed(
     val questId: String
 ): GameCommand
 
-// Игрок открыл квест - поменять маркер NEW
 data class CmdOpenQuest(
     override val playerId: String,
     val questId: String
@@ -222,19 +220,18 @@ data class PlayerData(
 )
 
 class QuestSystem {
-    // Здесь прописываем текст целей квестов по шагам на каждого квеста
 
     fun objectiveFor(q: QuestStateOnServer): String {
         if (q.status == QuestStatus.LOCKED){
             return "нет"
         }
 
-        if (q.questId == "q_alchemit"){
+        if (q.questId == "q_alchemist"){
             return when(q.step){
-                0 -> "Поговори с Алхимкой"
+                0 -> "Поговори с Алхимиком"
                 1 -> {
                     when(q.branch){
-                        QuestBranch.NONE -> "Выбери пусть help ли threat"
+                        QuestBranch.NONE -> "Выбери путь help или threat"
                         QuestBranch.HELP -> "собери траву ${q.progressCurrent} / ${q.progressTarget}"
                         QuestBranch.THREAT -> "собери золото ${q.progressCurrent} / ${q.progressTarget}"
                     }
@@ -248,8 +245,17 @@ class QuestSystem {
             return when(q.step){
                 0 -> "Поговори с гвардом"
                 1 -> "заплати ему: ${q.progressCurrent} / ${q.progressTarget}"
-                2 -> "сдай квест`"
+                2 -> "сдай квест"
                 else -> "квест завершён"
+            }
+        }
+
+        if (q.questId == "q_cola"){
+            return when(q.step){
+                0 -> "Найти магазин с кока колу зеро"
+                1 -> "Купить банку кока колу зеро: ${q.progressCurrent} / ${q.progressTarget}"
+                2 -> "Выпить кока колу зеро"
+                else -> "Квест завершён"
             }
         }
 
@@ -271,7 +277,6 @@ class QuestSystem {
         }
     }
 
-    // Подсказки куда идти - в будущем используем для карты в компассе
     private fun markerHintFor(q: QuestStateOnServer): String {
         if (q.status == QuestStatus.LOCKED){
             return "Сначала разблокируй"
@@ -300,8 +305,17 @@ class QuestSystem {
                 else -> "Готово"
             }
         }
+        if (q.questId == "q_cola"){
+            return when (q.step){
+                0 -> "Иди в магазин"
+                1 -> "Подойти к кассиру"
+                2 -> "Оплати колу и выпей её(можешь выпить хоть в канаве)"
+                else -> "Готово"
+            }
+        }
         return ""
     }
+
     fun branchTextFor(branch: QuestBranch): String {
         return when(branch){
             QuestBranch.NONE -> "Путь не выбран"
@@ -328,20 +342,6 @@ class QuestSystem {
             q.isNew -> QuestMarker.NEW
             else -> QuestMarker.NONE
         }
-    }
-
-    fun progressBarText(current: Int, target: Int, blocks: Int = 10): String {
-        if (target <= 0) return ""
-
-        val ratio = current.toFloat() / target.toFloat()
-        // ratio = отношение прогресса к цели
-
-        val filled = (ratio*blocks).toInt().coerceIn(0, blocks)
-        //coerceIn - ограничивает от 0 до ... blocks (10) исла
-
-        val empty = blocks - filled
-
-        return "0".repeat(filled) + "1".repeat(empty)
     }
 
     fun toJournalEntry(q: QuestStateOnServer): QuestJournalEntry{
@@ -379,6 +379,10 @@ class QuestSystem {
             if (q.questId == "q_guard"){
                 copy[i] = updateGuard(q, event)
             }
+
+            if (q.questId == "q_cola"){
+                copy[i] = updateColaQuest(q, event)
+            }
         }
         return copy.toList()
     }
@@ -406,7 +410,7 @@ class QuestSystem {
         }
 
         if (q.step == 1 && q.branch == QuestBranch.HELP && event is ItemCollected && event.itemId == "Herb"){
-            val newCurrent = (q.progressCurrent + event.countAdded).coerceAtMost(q.progressCurrent)
+            val newCurrent = (q.progressCurrent + event.countAdded).coerceAtMost(q.progressTarget)
             val update = q.copy(progressCurrent = newCurrent, isNew = false)
 
             if(newCurrent >= q.progressTarget){
@@ -415,7 +419,7 @@ class QuestSystem {
             return update
         }
         if(q.step == 1 && q.branch == QuestBranch.THREAT && event is GoldTurnedIn && event.questId == q.questId){
-            val newCurrent = (q.progressCurrent + event.amount).coerceAtMost(q.progressCurrent)
+            val newCurrent = (q.progressCurrent + event.amount).coerceAtMost(q.progressTarget)
             val update = q.copy(progressCurrent = newCurrent, isNew = false)
 
             if(newCurrent >= q.progressTarget){
@@ -425,13 +429,14 @@ class QuestSystem {
         }
         return q
     }
+
     fun updateGuard(q: QuestStateOnServer, event: GameEvent): QuestStateOnServer{
         val base = if (q.step == 0){
             q.copy(step = 1, progressCurrent = 0, progressTarget = 5, isNew = false)
         }else q
 
         if (base.step == 1 && event is GoldTurnedIn && event.questId == base.questId){
-            val newCurrent = (base.progressCurrent + event.amount).coerceAtMost(base.progressCurrent)
+            val newCurrent = (base.progressCurrent + event.amount).coerceAtMost(base.progressTarget)
             val updated = base.copy(progressCurrent = newCurrent, isNew = false)
 
             if (newCurrent >= q.progressTarget){
@@ -441,7 +446,31 @@ class QuestSystem {
         }
         return base
     }
+
+    private fun updateColaQuest(q: QuestStateOnServer, event: GameEvent): QuestStateOnServer {
+        if (q.step == 0 && event is ServerMessage && event.text.contains("magazine")) {
+            return q.copy(
+                step = 1,
+                progressCurrent = 0,
+                progressTarget = 1,
+                isNew = false
+            )
+        }
+
+        if (q.step == 1 && event is GoldTurnedIn && event.questId == q.questId) {
+            val newCurrent = (q.progressCurrent + event.amount).coerceAtMost(q.progressTarget)
+            val updated = q.copy(progressCurrent = newCurrent, isNew = false)
+
+            if (newCurrent >= q.progressTarget) {
+                return updated.copy(step = 2)
+            }
+            return updated
+        }
+
+        return q
+    }
 }
+
 class GameServer{
     private  val _events = MutableSharedFlow<GameEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<GameEvent> = _events.asSharedFlow()
@@ -528,7 +557,7 @@ class GameServer{
                 val ev = QuestBranchChosen(cmd.playerId, cmd.questId, cmd.branch)
                 _events.emit(ev)
 
-                val updated = QuestSystem.applyEvent(questSystem, ev)
+                val updated = questSystem.applyEvent(quests, ev)
                 setQuests(cmd.playerId, updated)
 
                 _events.emit(QuestJournalUpdated(cmd.playerId))
@@ -542,13 +571,13 @@ class GameServer{
                 val player = getPlayerData(cmd.playerId)
 
                 if (player.gold < cmd.amount){
-                    _events.emit(ServerMessage(cmd.playerId, "Недостаточно богат нужно ${cmd.amount}"))
+                    _events.emit(ServerMessage(cmd.playerId, "Недостаточно золота нужно ${cmd.amount}"))
                     return
                 }
 
-                setPlayerData(cmd.playerId, player.copy(gold = cmd.amount - cmd.amount))
+                setPlayerData(cmd.playerId, player.copy(gold = player.gold - cmd.amount))
 
-                val ev = GoldTurnedIn(cmd.playerId, cmd.questId,cmd.amount)
+                val ev = GoldTurnedIn(cmd.playerId, cmd.questId, cmd.amount)
                 _events.emit(ev)
 
                 val updated = questSystem.applyEvent(getQuests(cmd.playerId), ev)
@@ -559,6 +588,7 @@ class GameServer{
             is CmdFinishQuest -> {
                 finishQuest(cmd.playerId, cmd.questId)
             }
+            else -> {}
         }
     }
     private suspend fun finishQuest(playerId: String, questId: String) {
@@ -573,20 +603,44 @@ class GameServer{
         val q = list[index]
 
         if (q.status != QuestStatus.ACTIVE){
-            _events.emit(ServerMessage(playerId, "Нельзя совершить $questId статус: ${q.status}"))
+            _events.emit(ServerMessage(playerId, "Нельзя завершить $questId статус: ${q.status}"))
             return
         }
         if (q.step != 2){
-            _events.emit(ServerMessage(playerId, "Нельзя совершить $questId начала дойди до этапа 2"))
+            _events.emit(ServerMessage(playerId, "Нельзя завершить $questId сначала дойди до этапа 2"))
             return
         }
-        list[index] =q.copy(
+        list[index] = q.copy(
             status = QuestStatus.COMPLETED,
             step = 3,
             isNew = false
         )
         setQuests(playerId, list)
-        _events.emit(QuestCompleted(playerId. questId))
+        _events.emit(QuestCompleted(playerId, questId))
+
+        unlockDependentQuests(playerId, questId)
+
+        _events.emit(QuestJournalUpdated(playerId))
+    }
+    private suspend fun unlockDependentQuests(playerId: String, completedQuestId: String){
+        val list = getQuests(playerId).toMutableList()
+        var changed = false
+
+        for (i in list.indices){
+            val q = list[i]
+            if (q.status == QuestStatus.LOCKED && q.unlockRequiredQuestId == completedQuestId){
+                list[i] = q.copy(
+                    status = QuestStatus.ACTIVE,
+                    isNew = true
+                )
+                changed = true
+
+                _events.emit(QuestUnlocked(playerId, q.questId))
+            }
+        }
+        if (changed){
+            setQuests(playerId, list)
+        }
     }
 }
 
@@ -615,6 +669,83 @@ fun initialQuestList(): List<QuestStateOnServer> {
             true,
             false,
             "q_alchemist"
+        ),
+        QuestStateOnServer(
+            "q_cola",
+            "Купить кока кола зеро 😁",
+            QuestStatus.LOCKED,
+            0,
+            QuestBranch.NONE,
+            0,
+            0,
+            true,
+            false,
+            "q_guard"
         )
     )
 }
+
+class HudState {
+    val activePlayerIdFlow = MutableStateFlow("Oleg")
+    val activePlayerIdUI = mutableStateOf("Oleg")
+
+    val gold = mutableStateOf(0)
+    val inventoryText = mutableStateOf("Inventory (empty)")
+
+    val questEntries = mutableStateOf<List<QuestJournalEntry>>(emptyList())
+    val selectedQuests = MutableStateFlow<String?>(null)
+
+    val log = mutableStateOf<List<String>>(emptyList())
+}
+
+fun hudLog(hud: HudState, text: String){
+    hud.log.value = (hud.log.value + text).takeLast(20)
+}
+
+fun markerSymbol(marker: QuestMarker): String{
+    return when(marker){
+        QuestMarker.NEW -> "!"
+        QuestMarker.PINNED -> "@"
+        QuestMarker.COMPLETED -> "✓"
+        QuestMarker.LOCKED -> "🔒"
+        QuestMarker.NONE -> " "
+    }
+}
+
+fun journalSortRank(entry: QuestJournalEntry): Int{
+    return when{
+        entry.marker == QuestMarker.PINNED -> 0
+        entry.marker == QuestMarker.NEW -> 1
+        entry.status == QuestStatus.ACTIVE -> 2
+        entry.status == QuestStatus.LOCKED -> 3
+        entry.status == QuestStatus.COMPLETED -> 4
+        else -> 5
+    }
+}
+
+fun eventToText(event: GameEvent): String{
+    return when(event){
+        is QuestBranchChosen -> "QuestBranchChosen ${event.questId} -> ${event.branch}"
+        is ItemCollected ->  "ItemCollected ${event.itemId} x ${event.countAdded}"
+        is GoldTurnedIn -> "GoldTurnedIn ${event.questId} - ${event.amount}"
+        is QuestCompleted -> "QuestCompleted ${event.questId}"
+        is QuestUnlocked -> "QuestUnlocked ${event.questId}"
+        is QuestJournalUpdated -> "QuestJournalUpdated ${event.playerId}"
+        is ServerMessage -> "ServerMessage: ${event.text}"
+        else -> ""
+    }
+}
+fun progressBarText(current: Int, target: Int, blocks: Int = 10): String {
+    if (target <= 0) return ""
+    val ratio = current.toFloat() / target.toFloat()
+    val percentage = (ratio * 100).toInt()
+
+    val filled = (ratio * blocks).toInt().coerceIn(0, blocks)
+    val empty = blocks - filled
+    val bar = "█".repeat(filled) + "░".repeat(empty)
+    return "$bar $percentage%"
+}
+
+// 1.1 c
+// 1.2 c
+// 1.3 d
