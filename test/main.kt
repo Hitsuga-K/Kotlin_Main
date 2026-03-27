@@ -416,14 +416,18 @@ class GameServer{
         when (cmd) {
             is CmdMovePlayer -> {
                 updatePlayer(cmd.playerId) { p ->
+                    val mem = p.alchemistMemory
                     p.copy(
-                        alchemistMemory = newMemory.copy(
+                        posX = p.posX + cmd.dx,
+                        posZ = p.posZ + cmd.dz,
+                        alchemistMemory = mem.copy(
                             isStopped = true
                         )
                     )
                 }
                 refreshPlayerArea(cmd.playerId)
             }
+
             is CmdInteract -> {
                 val player = getPlayerState(cmd.playerId) //!
                 val obj = nearestObject(player)
