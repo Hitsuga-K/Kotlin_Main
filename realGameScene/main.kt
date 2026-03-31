@@ -71,7 +71,9 @@ data class PlayerState(
     val alchemistMemory: NpcMemory,
     val currentAreaId: String?,
     val hintText: String, // -= Подсказка что делать и тп
-    val gold: Int
+    val gold: Int,
+    val chestAvailable: Boolean = false,
+    val chestOpened: Boolean = false
 )
 
 // -=-=-= Вспомогательные функции =-=-=-
@@ -300,15 +302,9 @@ class GameServer{
             3f,
             0f,
             1.7f
-        ),
-        WorldObjectDef(
-            "treasure_box",
-            WorldObjectType.CHEST,
-            0f,
-            4f,
-            1.7f
         )
     )
+    var chestObject: WorldObjectDef? = null
 
     private  val _events = MutableSharedFlow<GameEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<GameEvent> = _events.asSharedFlow()
@@ -408,13 +404,16 @@ class GameServer{
 
     private fun nearestObject(player: PlayerState): WorldObjectDef? {
         val npcPos = _npcState.value
-        val objectsWithCurrentPos = worldObjects.map { obj ->
-            if (obj.id == "alchemist") {
-                obj.copy(x = npcPos.x, z = npcPos.z)
-            } else {
-                obj
-            }
+        val dynamicObjects = buildList {
+            addAll(worldObjects)
+            chestObject?.let { add(it) }
         }
+
+        val objectsWithCurrentPos = dynamicObjects.map { obj ->
+            if (obj.id == "alchemist") obj.copy(x = npcPos.x, z = npcPos.z)
+            else obj
+        }
+
 
         val candidates = objectsWithCurrentPos.filter { obj ->
             distance2d(player.posX, player.posZ, obj.x, obj.z) <= obj.interactRadius
@@ -546,13 +545,23 @@ class GameServer{
                     }
 
                     WorldObjectType.CHEST -> {
-                        val newGold = player.gold + 1
-                        updatePlayer(cmd.playerId) { p ->
-                            p.copy(gold = newGold)
+                        if (player.chestOpened) {
+                            _events.emit(ServerMessage(cmd.playerId, "Сундук уже пуст"))
+                            return
                         }
-                        _events.emit(InteractedWithChest(cmd.playerId, obj.id))
-                        _events.emit(ServerMessage(cmd.playerId, "Ты открыл сундук и нашел 1 золото! Теперь у тебя $newGold золота"))
+
+                        updatePlayer(cmd.playerId) { p ->
+                            p.copy(
+                                gold = p.gold + 10,
+                                chestOpened = true
+                            )
+                        }
+
+                        chestObject = null
+
+                        _events.emit(ServerMessage(cmd.playerId, "Ты открыл сундук и получил 10 золота!"))
                     }
+
                 }
             }
             is CmdChooseDialogueOption -> {
@@ -620,6 +629,16 @@ class GameServer{
                         _events.emit(NpcMemoryChanged(cmd.playerId, newMemory))
                         _events.emit(QuestStateChanged(cmd.playerId, QuestState.GOOD_END))
                         _events.emit(ServerMessage(cmd.playerId, "Алхимик получил траву и выдал тебе золото"))
+                        chestObject = WorldObjectDef(
+                            id = "treasure_box",
+                            type = WorldObjectType.CHEST,
+                            x = 0f,
+                            z = 4f,
+                            interactRadius = 1.7f
+                        )
+
+                        _events.emit(ServerMessage(cmd.playerId, "Где‑то неподалёку появился таинственный сундук..."))
+
                     }
                     else -> {
                         _events.emit(ServerMessage(cmd.playerId,"Неизвестный формат диалога"))
