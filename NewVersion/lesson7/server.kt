@@ -309,7 +309,7 @@ class ServerWorld(
             }
             is CmdResetQuest -> {
                 player.questState = QuestState.START
-                bus.publish(QuestStateChanged(cmd.playerId, questId, QuestState.START)
+                bus.publish(QuestStateChanged(cmd.playerId, questId, QuestState.START))
                 bus.publish(PlayerProgressSaved(cmd.playerId, "квест сброшен"))
             }
 
@@ -349,7 +349,7 @@ class ServerWorld(
     }
     private fun setQuestState(playerId: String, player: PlayerData, newState: QuestState) {
         val old = player.questState
-        if (newState != old) return
+        if (newState == old) return
 
         player.questState = newState
 

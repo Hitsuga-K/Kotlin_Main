@@ -232,8 +232,8 @@ class DamageSystem(private val server: GameServer){
                 val newHp = (player.hp - e.amount).coerceAtLeast(0)
                 player.copy(hp = newHp)
             }else{
-                val newDummy = (player.hp - e.amount).coerceAtLeast(0)
-                player.copy(hp = newDummy)
+                val newDummy = (player.dummyHp - e.amount).coerceAtLeast(0)
+                player.copy(dummyHp = newDummy)
             }
         }
     }

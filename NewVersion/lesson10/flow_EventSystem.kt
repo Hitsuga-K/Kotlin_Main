@@ -195,6 +195,7 @@ class CooldownSystem(
             val step = 100L
 
             while (isActive && server.getPlayer(playerId).attackCooldownMsLeft > 0L){
+                delay(step)
                 server.updatePlayer(playerId) { player ->
                     val left = (player.attackCooldownMsLeft - step).coerceAtLeast(0L)
                     player.copy(attackCooldownMsLeft = left)

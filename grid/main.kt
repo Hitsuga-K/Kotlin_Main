@@ -198,7 +198,7 @@ fun buildAlchemistDialogue(player:  PlayerState):  DialogueView {
             if (herbs < 3){
                 DialogueView(
                     "Алхимик",
-                    "Недостаточно, надо $herbs/4 травы",
+                    "Недостаточно, надо $herbs/3 травы",
                     emptyList()
                 )
             }else{
@@ -206,7 +206,7 @@ fun buildAlchemistDialogue(player:  PlayerState):  DialogueView {
                     "Алхимик",
                     "найс, прет как белый, давай сюда",
                     listOf(
-                        DialogueOption("give_herb", "Отдать 4 травы")
+                        DialogueOption("give_herb", "Отдать 3 травы")
                     )
                 )
             }
@@ -502,6 +502,8 @@ class GameServer {
                     "herb_source" -> "собери траву"
                     else -> "Подойди к одной из локаций"
                 }
+            updatePlayer(playerId) { p -> p.copy(hintText = newHint) }
+            return
         }
 
         if (oldAreaId != null){
@@ -669,7 +671,7 @@ class GameServer {
                 }
 
                 when(cmd.optionId){
-                    "accepted_help" -> {
+                    "accept_help" -> {
                         val radiusHerb = distance2D(player.gridX.toFloat(), player.gridZ.toFloat(), 3f, 0f)
                         if (radiusHerb <= 1.7f){
                             if (player.questState !=  QuestState.START){
